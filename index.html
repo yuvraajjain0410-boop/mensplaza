@@ -418,6 +418,7 @@ let editingId = null;
 let activeFilter = "All";
 let activeGender = "All";
 let productSearchTerm = "";
+let catalogueLoading = true;
 
 // ---------- storage ----------
 // FIX: window.storage only exists inside Claude.ai's preview sandbox — it does
@@ -589,6 +590,10 @@ function setGender(g){
 
 function renderGrid(){
   const el = document.getElementById('grid');
+  if(catalogueLoading){
+    el.innerHTML = `<div class="empty">Loading latest stock...</div>`;
+    return;
+  }
   let list = activeFilter==="All" ? products : products.filter(p=>p.cat===activeFilter);
   if(activeGender!=="All") list = list.filter(p=>p.gender===activeGender);
   if(productSearchTerm) list = list.filter(matchesSearch);
@@ -816,8 +821,22 @@ if(location.hash === '#admin') openAdmin();
 <script>
 /* E-commerce layer: retains the existing catalogue and localStorage admin data. */
 let luxCart=JSON.parse(localStorage.getItem('mp_cart')||'[]'), luxCurrent=null,luxImage=0,luxSize='';
+const rawLuxRenderGrid = luxRenderGrid;
+luxRenderGrid = function(){
+  if(catalogueLoading){
+    document.getElementById('grid').innerHTML = '<div class="empty">Loading latest stock...</div>';
+    return;
+  }
+  return rawLuxRenderGrid();
+};
 function luxSrc(v){if(!v)return '';return v.startsWith('UklGR')?'data:image/webp;base64,'+v:v}
 function luxProduct(id){return products.find(p=>p.id===id)}
+function luxNeedsSize(product){
+  const category = String(product?.cat || '').trim().toLowerCase();
+  if(['accessories','accessory','watch','watches','belt','belts','perfume','perfumes','bag','bags'].includes(category)) return false;
+  const size = String(product?.size || '').trim();
+  return Boolean(size) && !/^free\s*size$/i.test(size);
+}
 function luxRenderGrid(){const el=document.getElementById('grid');let list=activeFilter==='All'?products:products.filter(p=>p.cat===activeFilter);if(activeGender!=='All')list=list.filter(p=>p.gender===activeGender);if(productSearchTerm)list=list.filter(matchesSearch);if(!list.length){el.innerHTML='<div class="empty">No products found.</div>';return}el.innerHTML=list.map((p,i)=>{let old=(String(p.notes||'').match(/MRP\s*(\d+)/i)||[])[1],off=old&&+old>p.price?Math.round((1-p.price/old)*100):0;return `<div class="card" style="animation-delay:${i*.04}s"><div class="imgwrap" onclick="luxOpen('${p.id}')">${p.img?`<img loading="lazy" src="${escapeAttr(luxSrc(p.img))}" alt="${escapeAttr(p.name)}">`:'<span class="ph">NO IMAGE</span>'}<span class="cat-chip">${escapeHtml(p.cat)}</span></div><div class="sku">${escapeHtml(p.brand||'MEN\'S PLAZA')}</div><div class="name">${escapeHtml(p.name)}</div><div class="price">₹${formatPrice(p.price)} ${old?`<small style="text-decoration:line-through;color:#888;font-weight:400">₹${formatPrice(old)}</small> <small style="color:#168b4b">${off}% OFF</small>`:''}</div><div class="availability" style="font-size:11px;color:#168b4b;margin:6px 0">In stock</div><button class="wa-btn" onclick="luxAdd('${p.id}')">Add to Bag</button></div>`}).join('')}
 function luxOpen(id){luxCurrent=luxProduct(id);luxImage=0;luxSize='';let p=luxCurrent,images=[p.img,...(p.images||[])].filter(Boolean);if(images.length<2&&p.img)images=[p.img,p.img,p.img];document.getElementById('luxProduct').innerHTML=`<button class="lux-close" onclick="luxClose()">×</button><div class="lux-detail"><div class="lux-gallery"><div class="lux-thumbs">${images.map((x,i)=>`<img class="${i===0?'active':''}" src="${escapeAttr(luxSrc(x))}" onclick="luxSetImage(${i})">`).join('')}</div><div class="lux-main"><img id="luxMainImg" src="${escapeAttr(luxSrc(images[0]))}" onclick="this.classList.toggle('zoom')"><button class="lux-arrow lux-prev" onclick="luxMove(-1)">‹</button><button class="lux-arrow lux-next" onclick="luxMove(1)">›</button><button style="position:absolute;right:12px;bottom:12px" onclick="luxFullscreen()">⛶</button></div></div><div class="lux-info"><div class="lux-brand">${escapeHtml(p.brand||'MEN\'S PLAZA')} / ${escapeHtml(p.cat)}</div><h1>${escapeHtml(p.name)}</h1><div class="lux-price">₹${formatPrice(p.price)}</div><div class="lux-label">Select a size</div><div class="lux-sizes">${String(p.size||'UK 7, UK 8, UK 9').split(',').map(s=>`<button onclick="luxSelectSize(this,'${escapeAttr(s.trim())}')">${escapeHtml(s.trim())}</button>`).join('')}</div><div class="lux-actions"><button onclick="luxAdd('${p.id}',true)">Add to bag</button><button onclick="luxBuy('${p.id}')">Buy now</button></div><div class="lux-copy"><b>Product details</b><br>${escapeHtml(p.notes||'Premium everyday footwear selected for comfort and style.')}<br><br><b>Delivery information</b><br>Contact us after ordering for size confirmation and delivery details. Images can be swiped on mobile, selected through thumbnails, zoomed, or viewed full-screen.</div></div></div>`;document.getElementById('luxProduct').classList.add('open');document.body.style.overflow='hidden';let start;document.querySelector('.lux-main').addEventListener('touchstart',e=>start=e.touches[0].clientX,{passive:true});document.querySelector('.lux-main').addEventListener('touchend',e=>{if(Math.abs(e.changedTouches[0].clientX-start)>40)luxMove(e.changedTouches[0].clientX>start?-1:1)},{passive:true})}
 function luxClose(){document.getElementById('luxProduct').classList.remove('open');document.body.style.overflow=''}function luxImages(){return [luxCurrent.img,...(luxCurrent.images||[])].filter(Boolean)}function luxSetImage(i){luxImage=i;let a=luxImages();document.getElementById('luxMainImg').src=luxSrc(a[i%a.length]);document.querySelectorAll('.lux-thumbs img').forEach((x,n)=>x.classList.toggle('active',n===i%a.length))}function luxMove(n){let a=luxImages();luxSetImage((luxImage+n+a.length)%a.length)}function luxFullscreen(){let e=document.getElementById('luxFull');e.querySelector('img').src=document.getElementById('luxMainImg').src;e.classList.add('open')}function luxSelectSize(el,size){luxSize=size;document.querySelectorAll('.lux-sizes button').forEach(x=>x.classList.remove('active'));el.classList.add('active')}
@@ -830,6 +849,15 @@ const originalRenderGrid=renderGrid;renderGrid=luxRenderGrid;const originalLoad=
 .address-checkout{display:none;position:fixed;z-index:200;inset:0;background:#000a;overflow:auto;padding:22px}.address-checkout.open{display:block}.address-box{position:relative;max-width:600px;margin:20px auto;background:#fff;color:#16171b;padding:30px}.address-box h2{font:600 34px/1 'Archivo Black',sans-serif;margin:10px 0}.address-box p{color:#666;margin:0 0 20px}.address-close{position:absolute;right:16px;top:10px;border:0;background:transparent!important;color:#16171b!important;font-size:27px;cursor:pointer}.address-box label{display:block;font:700 10px 'IBM Plex Mono',monospace;letter-spacing:.08em;text-transform:uppercase;margin-top:13px}.address-box input,.address-box textarea{width:100%;padding:12px;border:1px solid #d6d6d6;margin-top:6px;outline:0;background:#fff;color:#16171b}.address-box textarea{height:75px;resize:vertical}.address-box input:focus,.address-box textarea:focus{border-color:#ff5a1f}.address-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}.address-confirm{width:100%;margin-top:23px;background:#ff5a1f!important;color:#fff;padding:16px!important;border:0;cursor:pointer;font-weight:800}@media(max-width:600px){.address-checkout{padding:10px}.address-box{padding:27px 17px}.address-grid{grid-template-columns:1fr}}
 </style>
 <script>
+/* Products marked Free Size do not show an unnecessary size selector. */
+const originalLuxOpen = luxOpen;
+luxOpen = function(id){
+  originalLuxOpen(id);
+  if(!luxNeedsSize(luxProduct(id))){
+    document.querySelector('.lux-info .lux-label')?.remove();
+    document.querySelector('.lux-info .lux-sizes')?.remove();
+  }
+};
 /* Address checkout: sends an explicit delivery request to the store WhatsApp. */
 function openAddressCheckout(lines){window.addressLines=lines;document.getElementById('addressOrder').textContent='Ordering: '+lines.map(l=>{const p=luxProduct(l.id);return p.name+(l.size?' ('+l.size+')':'')+' × '+l.qty}).join(', ');document.getElementById('addressCheckout').classList.add('open')}
 function closeAddressCheckout(){document.getElementById('addressCheckout').classList.remove('open')}
@@ -892,15 +920,17 @@ async function loadSharedCatalogue(){
     const response = await fetch(CLOUD_PRODUCTS_API, { cache: 'no-store' });
     if(!response.ok) throw new Error('Load failed');
     const cloudProducts = await response.json();
-    if(Array.isArray(cloudProducts) && cloudProducts.length){
-      products = cloudProducts;
-    } else if(products.length) {
-      await persist();
-    }
+    // The live catalogue is the source of truth, including when it is empty.
+    // Never put sample products back into D1 just because the response is empty.
+    if(Array.isArray(cloudProducts)) products = cloudProducts;
+    catalogueLoading = false;
     renderTicker();renderFilters();renderGrid();
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
   } catch(error) {
     console.info('Using local catalogue until cloud connection is available.');
+    catalogueLoading = false;
+    renderTicker();renderFilters();renderGrid();
+    if(typeof luxRenderGrid === 'function') luxRenderGrid();
   }
 }
 loadSharedCatalogue();
@@ -912,6 +942,20 @@ luxAdd = function(id, detail){
   if(detail && !luxSize) return showToast('Please select a size');
   addProductToBag(id, detail);
   if(!document.getElementById('luxCart').classList.contains('open')) luxToggleCart();
+};
+</script>
+<script>
+/* Free-size products can be added or ordered immediately. */
+const sizeAwareLuxAdd = luxAdd;
+luxAdd = function(id, detail){
+  const needsSize = luxNeedsSize(luxProduct(id));
+  if(detail && needsSize && !luxSize) return showToast('Please select a size');
+  return sizeAwareLuxAdd(id, Boolean(detail && needsSize));
+};
+luxBuy = function(id){
+  const needsSize = luxNeedsSize(luxProduct(id));
+  if(needsSize && !luxSize) return showToast('Please select a size');
+  openAddressCheckout([{id:id,size:needsSize ? luxSize : '',qty:1}]);
 };
 </script>
 <div id="privacyPolicy" class="privacy-policy" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
