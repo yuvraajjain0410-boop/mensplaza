@@ -355,6 +355,7 @@
           <label>Category</label>
           <select id="f_cat">
             <option>Sneakers</option>
+            <option>Running Shoes</option>
             <option>Boots</option>
             <option>Sandals</option>
             <option>Accessories</option>
@@ -431,21 +432,26 @@ let catalogueLoading = true;
 // its old cached copy and reload the fresh seed data — no manual cache clearing needed.
 const STORAGE_VERSION = 2;
 const STORAGE_KEY = 'mp_products_v' + STORAGE_VERSION;
+const CLOUD_CACHE_KEY = 'mp_live_catalogue_v1';
 
 async function loadProducts(){
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
+    // Show the last confirmed live catalogue immediately on repeat visits.
+    // The current D1 catalogue still refreshes quietly in the background.
+    const hostedStore = location.protocol === 'https:';
+    const liveCache = localStorage.getItem(CLOUD_CACHE_KEY);
+    const raw = liveCache || (hostedStore ? null : localStorage.getItem(STORAGE_KEY));
     if(raw){
       products = JSON.parse(raw);
       // Guard against corrupted/non-array data in storage
-      if(!Array.isArray(products)) products = seedProducts();
+      if(!Array.isArray(products)) products = hostedStore ? [] : seedProducts();
     } else {
-      products = seedProducts();
-      persist(); // save the seed data immediately so it's there next load too
+      products = hostedStore ? [] : seedProducts();
+      if(!hostedStore) persist(); // save seed data for offline/local previews only
     }
   }catch(e){
     // JSON.parse failure or localStorage unavailable (e.g. some private browsing modes)
-    products = seedProducts();
+    products = location.protocol === 'https:' ? [] : seedProducts();
   }
   renderTicker();
   renderFilters();
@@ -517,7 +523,7 @@ function catIcon(cat){
 
 function renderFilters(){
   // Keep every storefront department visible; All always includes the full catalogue.
-  const standardCats = ["All", "Sneakers", "Boots", "Sandals", "Accessories", "Garments", "Belt", "Perfume", "Watch", "Bags", "Other"];
+  const standardCats = ["All", "Sneakers", "Running Shoes", "Boots", "Sandals", "Accessories", "Garments", "Belt", "Perfume", "Watch", "Bags", "Other"];
   const cats = [...new Set([...standardCats, ...products.map(p=>p.cat)])];
   const el = document.getElementById('filters');
   el.innerHTML = cats.map(c=>`<button class="${c===activeFilter?'active':''}" onclick="setFilter('${escapeAttr(c)}')">${c==='All'?'✦':catIcon(c)} ${escapeHtml(c)}</button>`).join("");
@@ -545,7 +551,7 @@ function searchChoices(){
     const text = [product.name, product.brand, product.cat, product.sku, product.notes, product.gender].filter(Boolean).join(' ').toLowerCase();
     if(!query || text.includes(query)) add(product.name);
   });
-  ['Sneakers','Boots','Sandals','Accessories','Garments','Belt','Perfume','Watch','Bags'].forEach(category => {
+  ['Sneakers','Running Shoes','Boots','Sandals','Accessories','Garments','Belt','Perfume','Watch','Bags'].forEach(category => {
     if(!query || category.toLowerCase().includes(query)) add(category);
   });
   return values.slice(0,8);
@@ -911,6 +917,7 @@ persist = async function(){
       body: JSON.stringify(products)
     });
     if(!response.ok) throw new Error('Save failed');
+    localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(products));
   } catch(error) {
     showToast('Saved on this device — cloud sync needs deployment setup');
   }
@@ -922,7 +929,10 @@ async function loadSharedCatalogue(){
     const cloudProducts = await response.json();
     // The live catalogue is the source of truth, including when it is empty.
     // Never put sample products back into D1 just because the response is empty.
-    if(Array.isArray(cloudProducts)) products = cloudProducts;
+    if(Array.isArray(cloudProducts)) {
+      products = cloudProducts;
+      localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(cloudProducts));
+    }
     catalogueLoading = false;
     renderTicker();renderFilters();renderGrid();
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
