@@ -37,9 +37,13 @@ export async function onRequest(context) {
   if (request.method !== "PUT") return json({ error: "Method not allowed" }, 405);
   if (!(await isAdmin(request, env))) return json({ error: "Unauthorized" }, 401);
 
-  const products = await request.json();
+  const body = await request.json();
+  // Supports the old array format and the current safe product/deletion format.
+  const products = Array.isArray(body) ? body : body?.products;
+  const deletedIds = Array.isArray(body?.deletedIds) ? body.deletedIds : [];
   if (!Array.isArray(products)) return json({ error: "Products must be an array" }, 400);
   if (products.length > 500) return json({ error: "Too many products" }, 400);
+  if (deletedIds.length > 500) return json({ error: "Too many deletions" }, 400);
 
   // Add or update only the products received. Do not clear the whole catalogue:
   // a phone with an older local list must never erase products uploaded earlier.
@@ -54,6 +58,10 @@ export async function onRequest(context) {
       JSON.stringify(Array.isArray(product.images) ? product.images : []), String(product.notes || ""), Number(product.stock || 0)
     ));
   }
+  for (const id of deletedIds) {
+    if (id) statements.push(env.DB.prepare("DELETE FROM products WHERE id = ?").bind(String(id)));
+  }
+  if (!statements.length) return json({ ok: true, count: 0 });
   await env.DB.batch(statements);
   return json({ ok: true, count: products.length });
 }
