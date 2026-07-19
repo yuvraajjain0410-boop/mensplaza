@@ -41,11 +41,13 @@ export async function onRequest(context) {
   if (!Array.isArray(products)) return json({ error: "Products must be an array" }, 400);
   if (products.length > 500) return json({ error: "Too many products" }, 400);
 
-  const statements = [env.DB.prepare("DELETE FROM products")];
+  // Add or update only the products received. Do not clear the whole catalogue:
+  // a phone with an older local list must never erase products uploaded earlier.
+  const statements = [];
   for (const product of products) {
     if (!product.id || !product.name || !Number.isFinite(Number(product.price))) continue;
     statements.push(env.DB.prepare(
-      "INSERT INTO products (id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+      "INSERT INTO products (id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name=excluded.name, brand=excluded.brand, price=excluded.price, old_price=excluded.old_price, category=excluded.category, gender=excluded.gender, sizes=excluded.sizes, image=excluded.image, images=excluded.images, notes=excluded.notes, stock=excluded.stock, updated_at=CURRENT_TIMESTAMP"
     ).bind(
       String(product.id), String(product.name), String(product.brand || "Men's Plaza"), Number(product.price), Number(product.oldPrice || 0),
       String(product.cat || "Other"), String(product.gender || "Unisex"), String(product.size || ""), String(product.img || ""),
