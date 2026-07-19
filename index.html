@@ -403,7 +403,6 @@
 
       <div class="section-title" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
         <span>Current Stock (<span id="stockCount">0</span>)</span>
-        <button class="cancel-btn" style="font-size:12px;padding:6px 10px;" onclick="resetToDefaults()">Reset to Defaults</button>
       </div>
       <div class="admin-list" id="adminList"></div>
     </div>
@@ -463,8 +462,7 @@ async function persist(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
   }catch(e){
-    // e.g. storage quota exceeded (very large embedded images) or storage disabled
-    showToast("Save failed — storage may be full or disabled");
+    // Local storage is only an optional cache; the online catalogue is authoritative.
   }
 }
 
@@ -771,7 +769,7 @@ async function saveProduct(){
     products.push({id:cryptoRandom(), ...data});
   }
 
-  await persist();
+  if(!(await persist())) return;
   resetForm();
   renderAdminList();
   renderTicker();
@@ -782,9 +780,14 @@ async function saveProduct(){
 
 async function deleteProduct(id){
   if(!confirm("Delete this product?")) return;
+  const previousProducts = products;
   products = products.filter(p=>p.id!==id);
   if(!deletedProductIds.includes(id)) deletedProductIds.push(id);
-  await persist();
+  if(!(await persist())) {
+    products = previousProducts;
+    deletedProductIds = deletedProductIds.filter(deletedId=>deletedId!==id);
+    return;
+  }
   renderAdminList();
   renderTicker();
   renderFilters();
@@ -793,14 +796,7 @@ async function deleteProduct(id){
 }
 
 async function resetToDefaults(){
-  if(!confirm("This replaces ALL current products with the built-in default list. Any products you've added or edited will be lost. Continue?")) return;
-  products = seedProducts();
-  await persist();
-  renderAdminList();
-  renderTicker();
-  renderFilters();
-  renderGrid();
-  showToast("Reset to defaults");
+  showToast("Reset is disabled to protect your uploaded products");
 }
 
 // ---------- utils ----------
@@ -902,7 +898,7 @@ saveProduct=async function(){
   let images=[];try{images=JSON.parse(document.getElementById('f_imgs').value||'[]')}catch{}
   const data={name,price:Number(price)||0,sku:document.getElementById('f_sku').value.trim(),cat:document.getElementById('f_cat').value,gender:document.getElementById('f_gender').value,size:document.getElementById('f_size').value.trim(),img:document.getElementById('f_img').value.trim(),images,notes:document.getElementById('f_notes').value.trim()};
   if(editingId){const index=products.findIndex(p=>p.id===editingId);if(index>-1)products[index]={...products[index],...data}}else products.push({id:cryptoRandom(),...data});
-  await persist();resetForm();renderAdminList();renderTicker();renderFilters();renderGrid();showToast('Saved with '+(images.length+1)+' photo'+(images.length?'s':''));
+  if(!(await persist())) return;resetForm();renderAdminList();renderTicker();renderFilters();renderGrid();showToast('Saved with '+(images.length+1)+' photo'+(images.length?'s':''));
 };
 </script>
 <script>
@@ -910,7 +906,9 @@ saveProduct=async function(){
 const CLOUD_PRODUCTS_API = location.hostname.endsWith('.netlify.app') ? '/.netlify/functions/products' : '/api/products';
 const localPersist = persist;
 persist = async function(){
-  localPersist();
+  // Browser storage is only a convenience cache. Large product photos can exceed
+  // its quota, so never treat a cache failure as an online-save failure.
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(products)); } catch(e) {}
   try {
     const response = await fetch(CLOUD_PRODUCTS_API, {
       method: 'PUT',
@@ -919,10 +917,12 @@ persist = async function(){
       body: JSON.stringify({ products, deletedIds: deletedProductIds })
     });
     if(!response.ok) throw new Error('Save failed');
-    localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(products));
+    try { localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(products)); } catch(e) {}
     deletedProductIds = [];
+    return true;
   } catch(error) {
-    showToast('Saved on this device — cloud sync needs deployment setup');
+    showToast('Could not save online - check your connection and try again');
+    return false;
   }
 };
 async function loadSharedCatalogue(){
@@ -934,7 +934,7 @@ async function loadSharedCatalogue(){
     // Never put sample products back into D1 just because the response is empty.
     if(Array.isArray(cloudProducts)) {
       products = cloudProducts;
-      localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(cloudProducts));
+      try { localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(cloudProducts)); } catch(e) {}
     }
     catalogueLoading = false;
     renderTicker();renderFilters();renderGrid();
