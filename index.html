@@ -415,6 +415,7 @@
 <script>
 const WA_NUMBER = "918011799931";
 let products = [];
+let deletedProductIds = [];
 let editingId = null;
 let activeFilter = "All";
 let activeGender = "All";
@@ -782,6 +783,7 @@ async function saveProduct(){
 async function deleteProduct(id){
   if(!confirm("Delete this product?")) return;
   products = products.filter(p=>p.id!==id);
+  if(!deletedProductIds.includes(id)) deletedProductIds.push(id);
   await persist();
   renderAdminList();
   renderTicker();
@@ -914,10 +916,11 @@ persist = async function(){
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(products)
+      body: JSON.stringify({ products, deletedIds: deletedProductIds })
     });
     if(!response.ok) throw new Error('Save failed');
     localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(products));
+    deletedProductIds = [];
   } catch(error) {
     showToast('Saved on this device — cloud sync needs deployment setup');
   }
