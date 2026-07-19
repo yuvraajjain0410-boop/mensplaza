@@ -38,15 +38,17 @@ export async function onRequest(context) {
   if (!(await isAdmin(request, env))) return json({ error: "Unauthorized" }, 401);
 
   const body = await request.json();
-  // Supports the old array format and the current safe product/deletion format.
+  // index.html sends { products, deletedIds } — NOT a bare array. Support both
+  // shapes so an older cached frontend can't silently break saving either.
   const products = Array.isArray(body) ? body : body?.products;
   const deletedIds = Array.isArray(body?.deletedIds) ? body.deletedIds : [];
   if (!Array.isArray(products)) return json({ error: "Products must be an array" }, 400);
   if (products.length > 500) return json({ error: "Too many products" }, 400);
   if (deletedIds.length > 500) return json({ error: "Too many deletions" }, 400);
 
-  // Add or update only the products received. Do not clear the whole catalogue:
-  // a phone with an older local list must never erase products uploaded earlier.
+  // Upsert only what was sent. Never wipe the whole table — if a second device
+  // (or a stale browser cache) saves with a shorter local list, products that
+  // device doesn't know about must survive.
   const statements = [];
   for (const product of products) {
     if (!product.id || !product.name || !Number.isFinite(Number(product.price))) continue;
