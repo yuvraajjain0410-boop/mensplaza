@@ -1,4 +1,4 @@
-a<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -938,11 +938,13 @@ async function loadSharedCatalogue(){
     }
     catalogueLoading = false;
     renderTicker();renderFilters();renderGrid();
+    if(document.getElementById('adminList')) renderAdminList(); // keep the admin panel in sync with the real catalogue, not a stale cached count
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
   } catch(error) {
     console.info('Using local catalogue until cloud connection is available.');
     catalogueLoading = false;
     renderTicker();renderFilters();renderGrid();
+    if(document.getElementById('adminList')) renderAdminList();
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
   }
 }
