@@ -285,7 +285,12 @@
 
   <div class="filters" id="filters"></div>
   <div class="grid" id="grid"></div>
-  <div id="loadMoreIndicator" style="display:none;text-align:center;padding:20px;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.1em;"></div>
+  <div id="loadMoreIndicator" style="display:none;text-align:center;padding:32px 20px;"></div>
+  <style>
+    #loadMoreIndicator{color:var(--accent);font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;}
+    #loadMoreIndicator .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,90,31,0.25);border-top-color:var(--accent);border-radius:50%;margin-right:10px;vertical-align:middle;animation:lmspin .7s linear infinite;}
+    @keyframes lmspin{to{transform:rotate(360deg);}}
+  </style>
 
   <div class="enquiry">
     <div class="enquiry-tag">Got A Question?</div>
@@ -1007,7 +1012,7 @@ function renderLoadMoreIndicator(){
   if(!el) return;
   if(catalogueLoading || storefrontExhausted){ el.style.display = 'none'; return; }
   el.style.display = 'block';
-  el.textContent = isFetchingMorePage ? 'Loading more products...' : '';
+  el.innerHTML = isFetchingMorePage ? '<span class="spinner"></span>Loading more products...' : '';
 }
 
 // Fetch the next page automatically once the visitor scrolls near the bottom of the grid.
