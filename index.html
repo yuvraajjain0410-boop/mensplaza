@@ -285,6 +285,7 @@
 
   <div class="filters" id="filters"></div>
   <div class="grid" id="grid"></div>
+  <div id="loadMoreIndicator" style="display:none;text-align:center;padding:20px;color:var(--muted);font-family:'IBM Plex Mono',monospace;font-size:12px;text-transform:uppercase;letter-spacing:.1em;"></div>
 
   <div class="enquiry">
     <div class="enquiry-tag">Got A Question?</div>
@@ -421,6 +422,11 @@ let activeFilter = "All";
 let activeGender = "All";
 let productSearchTerm = "";
 let catalogueLoading = true;
+const PAGE_SIZE = 50;
+let storefrontOffset = 0;
+let storefrontExhausted = false;
+let isFetchingMorePage = false;
+let adminFullyLoaded = false; // becomes true once the admin panel has fetched the complete catalogue
 
 // ---------- storage ----------
 // FIX: window.storage only exists inside Claude.ai's preview sandbox — it does
@@ -528,7 +534,7 @@ function renderFilters(){
   const el = document.getElementById('filters');
   el.innerHTML = cats.map(c=>`<button class="${c===activeFilter?'active':''}" onclick="setFilter('${escapeAttr(c)}')">${c==='All'?'✦':catIcon(c)} ${escapeHtml(c)}</button>`).join("");
 }
-function setFilter(c){ activeFilter = c; renderFilters(); renderGrid(); }
+function setFilter(c){ activeFilter = c; renderFilters(); renderGrid(); if(c!=="All") loadFullCatalogue(); }
 function matchesSearch(product){
   if(!productSearchTerm) return true;
   return [product.name,product.brand,product.cat,product.sku,product.notes,product.gender]
@@ -571,6 +577,7 @@ function openSearch(){
   overlay.setAttribute('aria-hidden','false');
   input.value = productSearchTerm;
   renderSearchSuggestions();
+  loadFullCatalogue(); // so search results aren't limited to just the first loaded page
   setTimeout(() => input.focus(), 50);
 }
 function closeSearch(){
@@ -591,6 +598,7 @@ function chooseSearch(value){
 function setGender(g){
   activeGender = (activeGender===g) ? "All" : g;
   renderGrid();
+  if(activeGender!=="All") loadFullCatalogue();
   document.querySelector('.filters').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
@@ -651,7 +659,9 @@ async function tryLogin(){
     if(!response.ok) throw new Error('Incorrect password');
     document.getElementById('lockScreen').style.display = 'none';
     document.getElementById('adminPanel').style.display = 'block';
-    renderAdminList();
+    renderAdminList(); // show what's loaded so far immediately
+    await loadFullCatalogue(); // then fetch the true complete catalogue
+    renderAdminList(); // and refresh the admin view with the complete data
   }catch{document.getElementById('pwErr').textContent = "Wrong password, try again.";}
 }
 
@@ -898,10 +908,13 @@ resetForm=function(){previousResetForm();document.getElementById('f_imgs').value
 const previousClearImage=clearImage;
 clearImage=function(){previousClearImage();document.getElementById('f_imgs').value=''};
 saveProduct=async function(){
-  const name=document.getElementById('f_name').value.trim(),price=document.getElementById('f_price').value.trim();
-  if(!name||!price){showToast('Name and price are required');return}
+  const name=document.getElementById('f_name').value.trim(),priceRaw=document.getElementById('f_price').value.trim();
+  if(!name||!priceRaw){showToast('Name and price are required');return}
+  const priceCleaned = priceRaw.replace(/[^0-9.]/g, ''); // strip commas, ₹, spaces, etc. — "1,200" -> "1200"
+  const priceNum = Number(priceCleaned);
+  if(!priceCleaned || !Number.isFinite(priceNum) || priceNum <= 0){ showToast('Enter a valid price (numbers only)'); return; }
   let images=[];try{images=JSON.parse(document.getElementById('f_imgs').value||'[]')}catch{}
-  const data={name,price:Number(price)||0,sku:document.getElementById('f_sku').value.trim(),cat:document.getElementById('f_cat').value,gender:document.getElementById('f_gender').value,size:document.getElementById('f_size').value.trim(),img:document.getElementById('f_img').value.trim(),images,notes:document.getElementById('f_notes').value.trim()};
+  const data={name,price:priceNum,sku:document.getElementById('f_sku').value.trim(),cat:document.getElementById('f_cat').value,gender:document.getElementById('f_gender').value,size:document.getElementById('f_size').value.trim(),img:document.getElementById('f_img').value.trim(),images,notes:document.getElementById('f_notes').value.trim()};
   let savedId;
   if(editingId){const index=products.findIndex(p=>p.id===editingId);if(index>-1)products[index]={...products[index],...data};savedId=editingId}else{savedId=cryptoRandom();products.push({id:savedId,...data})}
   if(!pendingSyncIds.includes(savedId)) pendingSyncIds.push(savedId);
@@ -939,28 +952,91 @@ persist = async function(){
 };
 async function loadSharedCatalogue(){
   try {
-    const response = await fetch(CLOUD_PRODUCTS_API, { cache: 'no-store' });
+    const response = await fetch(`${CLOUD_PRODUCTS_API}?limit=${PAGE_SIZE}&offset=0`, { cache: 'no-store' });
     if(!response.ok) throw new Error('Load failed');
     const cloudProducts = await response.json();
-    // The live catalogue is the source of truth, including when it is empty.
-    // Never put sample products back into D1 just because the response is empty.
     if(Array.isArray(cloudProducts)) {
       products = cloudProducts;
+      storefrontOffset = cloudProducts.length;
+      storefrontExhausted = cloudProducts.length < PAGE_SIZE;
       try { localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(cloudProducts)); } catch(e) {}
     }
     catalogueLoading = false;
-    renderTicker();renderFilters();renderGrid();
-    if(document.getElementById('adminList')) renderAdminList(); // keep the admin panel in sync with the real catalogue, not a stale cached count
+    renderTicker();renderFilters();renderGrid();renderLoadMoreIndicator();
+    if(document.getElementById('adminList')) renderAdminList(); // shows this first page until the admin's full fetch (below) completes
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
   } catch(error) {
     console.info('Using local catalogue until cloud connection is available.');
     catalogueLoading = false;
-    renderTicker();renderFilters();renderGrid();
+    renderTicker();renderFilters();renderGrid();renderLoadMoreIndicator();
     if(document.getElementById('adminList')) renderAdminList();
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
   }
 }
 loadSharedCatalogue();
+
+// ---------- infinite scroll: fetch the next 50 once the visitor nears the bottom ----------
+async function loadMoreStorefrontProducts(){
+  if(isFetchingMorePage || storefrontExhausted || catalogueLoading) return;
+  isFetchingMorePage = true;
+  renderLoadMoreIndicator();
+  try {
+    const response = await fetch(`${CLOUD_PRODUCTS_API}?limit=${PAGE_SIZE}&offset=${storefrontOffset}`, { cache: 'no-store' });
+    if(!response.ok) throw new Error('Load more failed');
+    const nextPage = await response.json();
+    if(Array.isArray(nextPage) && nextPage.length){
+      const existingIds = new Set(products.map(p=>p.id));
+      const fresh = nextPage.filter(p=>!existingIds.has(p.id)); // guard against overlap if products were added while scrolling
+      products = products.concat(fresh);
+      storefrontOffset += nextPage.length;
+      if(nextPage.length < PAGE_SIZE) storefrontExhausted = true;
+      renderFilters();renderGrid();
+    } else {
+      storefrontExhausted = true;
+    }
+  } catch(error) {
+    console.info('Could not load more products right now — will retry on next scroll.');
+  } finally {
+    isFetchingMorePage = false;
+    renderLoadMoreIndicator();
+  }
+}
+
+function renderLoadMoreIndicator(){
+  const el = document.getElementById('loadMoreIndicator');
+  if(!el) return;
+  if(catalogueLoading || storefrontExhausted){ el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = isFetchingMorePage ? 'Loading more products...' : '';
+}
+
+// Fetch the next page automatically once the visitor scrolls near the bottom of the grid.
+window.addEventListener('scroll', () => {
+  if(document.getElementById('adminPanel')?.style.display === 'block') return; // pagination is for the storefront only
+  const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600;
+  if(nearBottom) loadMoreStorefrontProducts();
+}, { passive: true });
+
+// ---------- admin panel needs the COMPLETE catalogue, not just the first page ----------
+async function loadFullCatalogue(){
+  if(adminFullyLoaded) { return; } // already have everything, no need to re-fetch
+  try {
+    const response = await fetch(CLOUD_PRODUCTS_API, { cache: 'no-store' }); // no ?limit — server returns everything
+    if(!response.ok) throw new Error('Load failed');
+    const cloudProducts = await response.json();
+    if(Array.isArray(cloudProducts)) {
+      products = cloudProducts;
+      adminFullyLoaded = true;
+      storefrontExhausted = true; // we now hold the full catalogue locally, no further pages needed
+      storefrontOffset = cloudProducts.length;
+    }
+    renderTicker();renderFilters();renderGrid();
+    if(document.getElementById('adminList')) renderAdminList();
+    renderSearchSuggestions();
+  } catch(error) {
+    console.info('Could not load the full catalogue — showing what is currently loaded.');
+  }
+}
 </script>
 <script>
 /* Make the product-page action visibly confirm the added item by opening the bag. */
