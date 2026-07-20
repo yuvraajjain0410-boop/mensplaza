@@ -415,6 +415,7 @@
 const WA_NUMBER = "918011799931";
 let products = [];
 let deletedProductIds = [];
+let pendingSyncIds = []; // product ids changed since the last successful save — keeps saves small no matter how many products exist
 let editingId = null;
 let activeFilter = "All";
 let activeGender = "All";
@@ -657,6 +658,10 @@ async function tryLogin(){
 function renderAdminList(){
   document.getElementById('stockCount').textContent = products.length;
   const el = document.getElementById('adminList');
+  if(catalogueLoading){
+    el.innerHTML = `<div class="help">Loading latest stock...</div>`;
+    return;
+  }
   if(!products.length){
     el.innerHTML = `<div class="help">No products yet — add your first one above.</div>`;
     return;
@@ -897,7 +902,9 @@ saveProduct=async function(){
   if(!name||!price){showToast('Name and price are required');return}
   let images=[];try{images=JSON.parse(document.getElementById('f_imgs').value||'[]')}catch{}
   const data={name,price:Number(price)||0,sku:document.getElementById('f_sku').value.trim(),cat:document.getElementById('f_cat').value,gender:document.getElementById('f_gender').value,size:document.getElementById('f_size').value.trim(),img:document.getElementById('f_img').value.trim(),images,notes:document.getElementById('f_notes').value.trim()};
-  if(editingId){const index=products.findIndex(p=>p.id===editingId);if(index>-1)products[index]={...products[index],...data}}else products.push({id:cryptoRandom(),...data});
+  let savedId;
+  if(editingId){const index=products.findIndex(p=>p.id===editingId);if(index>-1)products[index]={...products[index],...data};savedId=editingId}else{savedId=cryptoRandom();products.push({id:savedId,...data})}
+  if(!pendingSyncIds.includes(savedId)) pendingSyncIds.push(savedId);
   if(!(await persist())) return;resetForm();renderAdminList();renderTicker();renderFilters();renderGrid();showToast('Saved with '+(images.length+1)+' photo'+(images.length?'s':''));
 };
 </script>
@@ -909,16 +916,21 @@ persist = async function(){
   // Browser storage is only a convenience cache. Large product photos can exceed
   // its quota, so never treat a cache failure as an online-save failure.
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(products)); } catch(e) {}
+  // Send only what changed, not the whole catalogue — keeps every save small
+  // regardless of how many hundreds of products already exist.
+  const productsToSend = products.filter(p => pendingSyncIds.includes(p.id));
+  if(!productsToSend.length && !deletedProductIds.length){ return true; } // nothing changed, nothing to send
   try {
     const response = await fetch(CLOUD_PRODUCTS_API, {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ products, deletedIds: deletedProductIds })
+      body: JSON.stringify({ products: productsToSend, deletedIds: deletedProductIds })
     });
     if(!response.ok) throw new Error('Save failed');
     try { localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify(products)); } catch(e) {}
     deletedProductIds = [];
+    pendingSyncIds = [];
     return true;
   } catch(error) {
     showToast('Could not save online - check your connection and try again');
