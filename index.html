@@ -884,14 +884,7 @@ async function handleFileSelect(event){
   if(!selected.length){help.textContent='This product already has 6 photos. Remove photos before adding more.';event.target.value='';return}
   help.textContent='Compressing '+selected.length+' photo'+(selected.length>1?'s':'')+'...';
   const compress=file=>new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=e=>{const image=new Image();image.onload=()=>{const max=900,scale=Math.min(1,max/Math.max(image.width,image.height)),canvas=document.createElement('canvas');canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);canvas.getContext('2d').drawImage(image,0,0,canvas.width,canvas.height);resolve(canvas.toDataURL('image/jpeg',.76))};image.onerror=reject;image.src=e.target.result};reader.onerror=reject;reader.readAsDataURL(file)});
-  const uploadToR2=async dataUrl=>{const res=await fetch('/api/upload',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:dataUrl})});if(!res.ok)throw new Error('Upload failed');return (await res.json()).url};
-  try{
-    help.textContent='Uploading photo(s)...';
-    const compressed=await Promise.all(selected.map(compress));
-    const photos=await Promise.all(compressed.map(uploadToR2));
-    const all=[...existing.filter(Boolean),...photos].slice(0,6);
-    document.getElementById('f_img').value=all[0];document.getElementById('f_imgs').value=JSON.stringify(all.slice(1));document.getElementById('imgPreview').src=all[0];document.getElementById('imgPreviewWrap').style.display='block';event.target.value='';help.textContent=all.length+' photo'+(all.length>1?'s':'')+' ready. Tap again to add more (maximum 6).'
-  }catch{help.textContent='One or more photos could not be uploaded. Check your connection and try again.'}
+  try{const photos=await Promise.all(selected.map(compress)),all=[...existing.filter(Boolean),...photos].slice(0,6);document.getElementById('f_img').value=all[0];document.getElementById('f_imgs').value=JSON.stringify(all.slice(1));document.getElementById('imgPreview').src=all[0];document.getElementById('imgPreviewWrap').style.display='block';event.target.value='';help.textContent=all.length+' photo'+(all.length>1?'s':'')+' ready. Tap again to add more (maximum 6).'}catch{help.textContent='One or more photos could not be read.'}
 }
 const previousEditProduct=editProduct;
 editProduct=function(id){previousEditProduct(id);const product=products.find(p=>p.id===id);document.getElementById('f_imgs').value=JSON.stringify((product&&product.images)||[])};
