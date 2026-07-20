@@ -26,19 +26,42 @@ export async function onRequest(context) {
     const url = new URL(request.url);
     const limitParam = url.searchParams.get("limit");
     const offsetParam = url.searchParams.get("offset");
+    const idsParam = url.searchParams.get("ids");
     const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 0, 1), 200) : null;
     const offset = offsetParam ? Math.max(parseInt(offsetParam, 10) || 0, 0) : 0;
 
-    // No ?limit given (e.g. the admin panel's full fetch) — behave exactly as before, return everything.
-    const query = limit
-      ? env.DB.prepare(
-          "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?"
-        ).bind(limit, offset)
-      : env.DB.prepare(
-          "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC"
-        );
+    // ?ids=a,b,c — batch fetch of full photo sets for specific products (used to
+    // quietly prefetch the remaining photos in the background after a list loads).
+    if (idsParam) {
+      const ids = idsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 100);
+      if (!ids.length) return json({});
+      const placeholders = ids.map(() => "?").join(",");
+      const { results } = await env.DB.prepare(
+        `SELECT id, image, images FROM products WHERE id IN (${placeholders})`
+      ).bind(...ids).all();
+      const byId = {};
+      results.forEach(row => { byId[row.id] = { img: row.image || "", images: JSON.parse(row.images || "[]") }; });
+      return json(byId);
+    }
 
-    const { results } = await query.all();
+    // ?limit given (the storefront list/grid) — thumbnail only, no "images" array,
+    // to keep the initial payload small regardless of how many photos a product has.
+    if (limit) {
+      const { results } = await env.DB.prepare(
+        "SELECT id, name, brand, price, old_price, category, gender, sizes, image, notes, stock FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      ).bind(limit, offset).all();
+      return json(results.map(row => ({
+        id: row.id, name: row.name, brand: row.brand || "Men's Plaza", price: row.price,
+        oldPrice: row.old_price || 0, cat: row.category, gender: row.gender || "Unisex",
+        size: row.sizes || "", img: row.image || "", images: [], // filled in later via ?ids= prefetch
+        notes: row.notes || "", stock: row.stock || 0
+      })));
+    }
+
+    // No params (the admin panel's full fetch) — behave exactly as before, everything included.
+    const { results } = await env.DB.prepare(
+      "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC"
+    ).all();
     return json(results.map(row => ({
       id: row.id, name: row.name, brand: row.brand || "Men's Plaza", price: row.price,
       oldPrice: row.old_price || 0, cat: row.category, gender: row.gender || "Unisex",
