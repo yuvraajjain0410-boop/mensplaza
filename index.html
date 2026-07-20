@@ -432,6 +432,7 @@ let storefrontOffset = 0;
 let storefrontExhausted = false;
 let isFetchingMorePage = false;
 let adminFullyLoaded = false; // becomes true once the admin panel has fetched the complete catalogue
+const photosPrefetched = new Set(); // product ids whose full photo set has already been fetched
 
 // ---------- storage ----------
 // FIX: window.storage only exists inside Claude.ai's preview sandbox — it does
@@ -862,7 +863,23 @@ function luxNeedsSize(product){
   return Boolean(size) && !/^free\s*size$/i.test(size);
 }
 function luxRenderGrid(){const el=document.getElementById('grid');let list=activeFilter==='All'?products:products.filter(p=>p.cat===activeFilter);if(activeGender!=='All')list=list.filter(p=>p.gender===activeGender);if(productSearchTerm)list=list.filter(matchesSearch);if(!list.length){el.innerHTML='<div class="empty">No products found.</div>';return}el.innerHTML=list.map((p,i)=>{let old=(String(p.notes||'').match(/MRP\s*(\d+)/i)||[])[1],off=old&&+old>p.price?Math.round((1-p.price/old)*100):0;return `<div class="card" style="animation-delay:${i*.04}s"><div class="imgwrap" onclick="luxOpen('${p.id}')">${p.img?`<img loading="lazy" src="${escapeAttr(luxSrc(p.img))}" alt="${escapeAttr(p.name)}">`:'<span class="ph">NO IMAGE</span>'}<span class="cat-chip">${escapeHtml(p.cat)}</span></div><div class="sku">${escapeHtml(p.brand||'MEN\'S PLAZA')}</div><div class="name">${escapeHtml(p.name)}</div><div class="price">₹${formatPrice(p.price)} ${old?`<small style="text-decoration:line-through;color:#888;font-weight:400">₹${formatPrice(old)}</small> <small style="color:#168b4b">${off}% OFF</small>`:''}</div><div class="availability" style="font-size:11px;color:#168b4b;margin:6px 0">In stock</div><button class="wa-btn" onclick="luxAdd('${p.id}')">Add to Bag</button></div>`}).join('')}
-function luxOpen(id){luxCurrent=luxProduct(id);luxImage=0;luxSize='';let p=luxCurrent,images=[p.img,...(p.images||[])].filter(Boolean);if(images.length<2&&p.img)images=[p.img,p.img,p.img];document.getElementById('luxProduct').innerHTML=`<button class="lux-close" onclick="luxClose()">×</button><div class="lux-detail"><div class="lux-gallery"><div class="lux-thumbs">${images.map((x,i)=>`<img class="${i===0?'active':''}" src="${escapeAttr(luxSrc(x))}" onclick="luxSetImage(${i})">`).join('')}</div><div class="lux-main"><img id="luxMainImg" src="${escapeAttr(luxSrc(images[0]))}" onclick="this.classList.toggle('zoom')"><button class="lux-arrow lux-prev" onclick="luxMove(-1)">‹</button><button class="lux-arrow lux-next" onclick="luxMove(1)">›</button><button style="position:absolute;right:12px;bottom:12px" onclick="luxFullscreen()">⛶</button></div></div><div class="lux-info"><div class="lux-brand">${escapeHtml(p.brand||'MEN\'S PLAZA')} / ${escapeHtml(p.cat)}</div><h1>${escapeHtml(p.name)}</h1><div class="lux-price">₹${formatPrice(p.price)}</div><div class="lux-label">Select a size</div><div class="lux-sizes">${String(p.size||'UK 7, UK 8, UK 9').split(',').map(s=>`<button onclick="luxSelectSize(this,'${escapeAttr(s.trim())}')">${escapeHtml(s.trim())}</button>`).join('')}</div><div class="lux-actions"><button onclick="luxAdd('${p.id}',true)">Add to bag</button><button onclick="luxBuy('${p.id}')">Buy now</button></div><div class="lux-copy"><b>Product details</b><br>${escapeHtml(p.notes||'Premium everyday footwear selected for comfort and style.')}<br><br><b>Delivery information</b><br>Contact us after ordering for size confirmation and delivery details. Images can be swiped on mobile, selected through thumbnails, zoomed, or viewed full-screen.</div></div></div>`;document.getElementById('luxProduct').classList.add('open');document.body.style.overflow='hidden';let start;document.querySelector('.lux-main').addEventListener('touchstart',e=>start=e.touches[0].clientX,{passive:true});document.querySelector('.lux-main').addEventListener('touchend',e=>{if(Math.abs(e.changedTouches[0].clientX-start)>40)luxMove(e.changedTouches[0].clientX>start?-1:1)},{passive:true})}
+async function luxOpen(id){
+  luxCurrent=luxProduct(id);luxImage=0;luxSize='';
+  let p=luxCurrent;
+  // Normally the background prefetch already filled this in by the time someone taps a
+  // product. On the rare chance it hasn't (opened right as the page loaded), fetch just
+  // this one product's photos now — small and fast, instead of showing only the thumbnail.
+  if(!photosPrefetched.has(id) && p.img){
+    try {
+      const response = await fetch(`${CLOUD_PRODUCTS_API}?ids=${id}`, { cache: 'no-store' });
+      if(response.ok){
+        const photoData = await response.json();
+        if(photoData[id]){ p.images = photoData[id].images || []; photosPrefetched.add(id); }
+      }
+    } catch(error) { /* fall back silently to whatever photos are already on hand */ }
+  }
+  let images=[p.img,...(p.images||[])].filter(Boolean);if(images.length<2&&p.img)images=[p.img,p.img,p.img];document.getElementById('luxProduct').innerHTML=`<button class="lux-close" onclick="luxClose()">×</button><div class="lux-detail"><div class="lux-gallery"><div class="lux-thumbs">${images.map((x,i)=>`<img class="${i===0?'active':''}" src="${escapeAttr(luxSrc(x))}" onclick="luxSetImage(${i})">`).join('')}</div><div class="lux-main"><img id="luxMainImg" src="${escapeAttr(luxSrc(images[0]))}" onclick="this.classList.toggle('zoom')"><button class="lux-arrow lux-prev" onclick="luxMove(-1)">‹</button><button class="lux-arrow lux-next" onclick="luxMove(1)">›</button><button style="position:absolute;right:12px;bottom:12px" onclick="luxFullscreen()">⛶</button></div></div><div class="lux-info"><div class="lux-brand">${escapeHtml(p.brand||'MEN\'S PLAZA')} / ${escapeHtml(p.cat)}</div><h1>${escapeHtml(p.name)}</h1><div class="lux-price">₹${formatPrice(p.price)}</div><div class="lux-label">Select a size</div><div class="lux-sizes">${String(p.size||'UK 7, UK 8, UK 9').split(',').map(s=>`<button onclick="luxSelectSize(this,'${escapeAttr(s.trim())}')">${escapeHtml(s.trim())}</button>`).join('')}</div><div class="lux-actions"><button onclick="luxAdd('${p.id}',true)">Add to bag</button><button onclick="luxBuy('${p.id}')">Buy now</button></div><div class="lux-copy"><b>Product details</b><br>${escapeHtml(p.notes||'Premium everyday footwear selected for comfort and style.')}<br><br><b>Delivery information</b><br>Contact us after ordering for size confirmation and delivery details. Images can be swiped on mobile, selected through thumbnails, zoomed, or viewed full-screen.</div></div></div>`;document.getElementById('luxProduct').classList.add('open');document.body.style.overflow='hidden';let start;document.querySelector('.lux-main').addEventListener('touchstart',e=>start=e.touches[0].clientX,{passive:true});document.querySelector('.lux-main').addEventListener('touchend',e=>{if(Math.abs(e.changedTouches[0].clientX-start)>40)luxMove(e.changedTouches[0].clientX>start?-1:1)},{passive:true})
+}
 function luxClose(){document.getElementById('luxProduct').classList.remove('open');document.body.style.overflow=''}function luxImages(){return [luxCurrent.img,...(luxCurrent.images||[])].filter(Boolean)}function luxSetImage(i){luxImage=i;let a=luxImages();document.getElementById('luxMainImg').src=luxSrc(a[i%a.length]);document.querySelectorAll('.lux-thumbs img').forEach((x,n)=>x.classList.toggle('active',n===i%a.length))}function luxMove(n){let a=luxImages();luxSetImage((luxImage+n+a.length)%a.length)}function luxFullscreen(){let e=document.getElementById('luxFull');e.querySelector('img').src=document.getElementById('luxMainImg').src;e.classList.add('open')}function luxSelectSize(el,size){luxSize=size;document.querySelectorAll('.lux-sizes button').forEach(x=>x.classList.remove('active'));el.classList.add('active')}
 function luxAdd(id,detail=false){if(detail&&!luxSize)return showToast('Please select a size');let found=luxCart.find(x=>x.id===id&&x.size===(detail?luxSize:''));if(found)found.qty++;else luxCart.push({id,size:detail?luxSize:'',qty:1});localStorage.setItem('mp_cart',JSON.stringify(luxCart));luxRenderCart();showToast('Added to your bag')}
 function luxRenderCart(){let total=0;document.getElementById('luxCartItems').innerHTML=luxCart.map((l,i)=>{let p=luxProduct(l.id);if(!p)return '';total+=p.price*l.qty;return `<div class="lux-cart-item"><img src="${escapeAttr(luxSrc(p.img))}"><div><b>${escapeHtml(p.name)}</b><br><small>${escapeHtml(l.size||'Standard')} · Qty ${l.qty}</small><br>₹${formatPrice(p.price*l.qty)}</div><button onclick="luxRemove(${i})">Remove</button></div>`}).join('')||'<p style="padding:20px 0;color:#777">Your bag is empty.</p>';document.getElementById('luxCartTotal').textContent='₹'+formatPrice(total);const count=document.getElementById('cartCount');if(count)count.textContent=luxCart.reduce((sum,item)=>sum+Number(item.qty||0),0)}function luxRemove(i){luxCart.splice(i,1);localStorage.setItem('mp_cart',JSON.stringify(luxCart));luxRenderCart()}function luxToggleCart(){document.getElementById('luxCart').classList.toggle('open');document.getElementById('luxShade').classList.toggle('open')}function luxBuy(id){luxAdd(id,true);luxClose();luxToggleCart()}function luxCheckout(){if(!luxCart.length)return showToast('Your bag is empty');let text=luxCart.map(l=>{let p=luxProduct(l.id);return `• ${p.name}${l.size?' ('+l.size+')':''} × ${l.qty} — ₹${formatPrice(p.price*l.qty)}`}).join('\n');window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent('Hi, I would like to order:\n\n'+text)}`,'_blank')}
@@ -955,6 +972,28 @@ persist = async function(){
     return false;
   }
 };
+// ---------- background prefetch: quietly fetch the remaining photos for a page
+// of products right after their thumbnails load, so opening one feels instant ----------
+async function prefetchPhotos(productList){
+  const ids = productList.map(p=>p.id).filter(id=>id && !photosPrefetched.has(id));
+  if(!ids.length) return;
+  ids.forEach(id=>photosPrefetched.add(id)); // mark upfront so a second call can't re-request the same batch
+  try {
+    const response = await fetch(`${CLOUD_PRODUCTS_API}?ids=${ids.join(',')}`, { cache: 'no-store' });
+    if(!response.ok) throw new Error('Prefetch failed');
+    const photoData = await response.json();
+    products.forEach(p=>{
+      if(photoData[p.id]){
+        p.images = photoData[p.id].images || [];
+        if(photoData[p.id].img) p.img = photoData[p.id].img;
+      }
+    });
+  } catch(error) {
+    ids.forEach(id=>photosPrefetched.delete(id)); // allow a retry (e.g. via luxOpen's fallback) since this attempt failed
+    console.info('Background photo prefetch failed — will fetch on demand if needed.');
+  }
+}
+
 async function loadSharedCatalogue(){
   try {
     const response = await fetch(`${CLOUD_PRODUCTS_API}?limit=${PAGE_SIZE}&offset=0`, { cache: 'no-store' });
@@ -970,6 +1009,7 @@ async function loadSharedCatalogue(){
     renderTicker();renderFilters();renderGrid();renderLoadMoreIndicator();
     if(document.getElementById('adminList')) renderAdminList(); // shows this first page until the admin's full fetch (below) completes
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
+    prefetchPhotos(cloudProducts); // quietly fetch the rest of these products' photos in the background
   } catch(error) {
     console.info('Using local catalogue until cloud connection is available.');
     catalogueLoading = false;
@@ -996,6 +1036,7 @@ async function loadMoreStorefrontProducts(){
       storefrontOffset += nextPage.length;
       if(nextPage.length < PAGE_SIZE) storefrontExhausted = true;
       renderFilters();renderGrid();
+      prefetchPhotos(fresh); // quietly fetch this new batch's photos in the background too
     } else {
       storefrontExhausted = true;
     }
