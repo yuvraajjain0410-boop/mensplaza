@@ -23,9 +23,22 @@ export async function onRequest(context) {
   const { request, env } = context;
 
   if (request.method === "GET") {
-    const { results } = await env.DB.prepare(
-      "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC"
-    ).all();
+    const url = new URL(request.url);
+    const limitParam = url.searchParams.get("limit");
+    const offsetParam = url.searchParams.get("offset");
+    const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 0, 1), 200) : null;
+    const offset = offsetParam ? Math.max(parseInt(offsetParam, 10) || 0, 0) : 0;
+
+    // No ?limit given (e.g. the admin panel's full fetch) — behave exactly as before, return everything.
+    const query = limit
+      ? env.DB.prepare(
+          "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        ).bind(limit, offset)
+      : env.DB.prepare(
+          "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC"
+        );
+
+    const { results } = await query.all();
     return json(results.map(row => ({
       id: row.id, name: row.name, brand: row.brand || "Men's Plaza", price: row.price,
       oldPrice: row.old_price || 0, cat: row.category, gender: row.gender || "Unisex",
