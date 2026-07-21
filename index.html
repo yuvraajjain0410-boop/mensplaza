@@ -674,7 +674,7 @@ async function tryLogin(){
 function renderAdminList(){
   document.getElementById('stockCount').textContent = products.length;
   const el = document.getElementById('adminList');
-  if(catalogueLoading){
+  if(catalogueLoading || !adminFullyLoaded){
     el.innerHTML = `<div class="help">Loading latest stock...</div>`;
     return;
   }
@@ -882,7 +882,7 @@ async function luxOpen(id){
 }
 function luxClose(){document.getElementById('luxProduct').classList.remove('open');document.body.style.overflow=''}function luxImages(){return [luxCurrent.img,...(luxCurrent.images||[])].filter(Boolean)}function luxSetImage(i){luxImage=i;let a=luxImages();document.getElementById('luxMainImg').src=luxSrc(a[i%a.length]);document.querySelectorAll('.lux-thumbs img').forEach((x,n)=>x.classList.toggle('active',n===i%a.length))}function luxMove(n){let a=luxImages();luxSetImage((luxImage+n+a.length)%a.length)}function luxFullscreen(){let e=document.getElementById('luxFull');e.querySelector('img').src=document.getElementById('luxMainImg').src;e.classList.add('open')}function luxSelectSize(el,size){luxSize=size;document.querySelectorAll('.lux-sizes button').forEach(x=>x.classList.remove('active'));el.classList.add('active')}
 function luxAdd(id,detail=false){if(detail&&!luxSize)return showToast('Please select a size');let found=luxCart.find(x=>x.id===id&&x.size===(detail?luxSize:''));if(found)found.qty++;else luxCart.push({id,size:detail?luxSize:'',qty:1});localStorage.setItem('mp_cart',JSON.stringify(luxCart));luxRenderCart();showToast('Added to your bag')}
-function luxRenderCart(){let total=0;document.getElementById('luxCartItems').innerHTML=luxCart.map((l,i)=>{let p=luxProduct(l.id);if(!p)return '';total+=p.price*l.qty;return `<div class="lux-cart-item"><img src="${escapeAttr(luxSrc(p.img))}"><div><b>${escapeHtml(p.name)}</b><br><small>${escapeHtml(l.size||'Standard')} · Qty ${l.qty}</small><br>₹${formatPrice(p.price*l.qty)}</div><button onclick="luxRemove(${i})">Remove</button></div>`}).join('')||'<p style="padding:20px 0;color:#777">Your bag is empty.</p>';document.getElementById('luxCartTotal').textContent='₹'+formatPrice(total);const count=document.getElementById('cartCount');if(count)count.textContent=luxCart.reduce((sum,item)=>sum+Number(item.qty||0),0)}function luxRemove(i){luxCart.splice(i,1);localStorage.setItem('mp_cart',JSON.stringify(luxCart));luxRenderCart()}function luxToggleCart(){document.getElementById('luxCart').classList.toggle('open');document.getElementById('luxShade').classList.toggle('open')}function luxBuy(id){luxAdd(id,true);luxClose();luxToggleCart()}function luxCheckout(){if(!luxCart.length)return showToast('Your bag is empty');let text=luxCart.map(l=>{let p=luxProduct(l.id);return `• ${p.name}${l.size?' ('+l.size+')':''} × ${l.qty} — ₹${formatPrice(p.price*l.qty)}`}).join('\n');window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent('Hi, I would like to order:\n\n'+text)}`,'_blank')}
+function luxRenderCart(){let total=0;document.getElementById('luxCartItems').innerHTML=luxCart.map((l,i)=>{let p=luxProduct(l.id);if(!p)return '';total+=p.price*l.qty;return `<div class="lux-cart-item"><img src="${escapeAttr(luxSrc(p.img))}"><div><b>${escapeHtml(p.name)}</b><br><small>${escapeHtml(l.size||'Standard')} · Qty ${l.qty}</small><br>₹${formatPrice(p.price*l.qty)}</div><button onclick="luxRemove(${i})">Remove</button></div>`}).join('')||'<p style="padding:20px 0;color:#777">Your bag is empty.</p>';document.getElementById('luxCartTotal').textContent='₹'+formatPrice(total);const count=document.getElementById('cartCount');if(count)count.textContent=luxCart.reduce((sum,item)=>sum+Number(item.qty||0),0)}function luxRemove(i){luxCart.splice(i,1);localStorage.setItem('mp_cart',JSON.stringify(luxCart));luxRenderCart()}function luxToggleCart(){document.getElementById('luxCart').classList.toggle('open');document.getElementById('luxShade').classList.toggle('open');loadFullCatalogue();}function luxBuy(id){luxAdd(id,true);luxClose();luxToggleCart()}function luxCheckout(){if(!luxCart.length)return showToast('Your bag is empty');const missing=luxCart.some(l=>!luxProduct(l.id));if(missing)return showToast('Still loading your bag \u2014 please wait a moment and try again');let text=luxCart.map(l=>{let p=luxProduct(l.id);return `• ${p.name}${l.size?' ('+l.size+')':''} × ${l.qty} — ₹${formatPrice(p.price*l.qty)}`}).join('\n');window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent('Hi, I would like to order:\n\n'+text)}`,'_blank')}
 const originalRenderGrid=renderGrid;renderGrid=luxRenderGrid;const originalLoad=loadProducts;loadProducts=async function(){await originalLoad();luxRenderGrid();luxRenderCart()};luxRenderGrid();luxRenderCart();
 </script>
 <div id="addressCheckout" class="address-checkout"><div class="address-box"><button class="address-close" onclick="closeAddressCheckout()">×</button><div class="lux-label">Secure order request</div><h2>Delivery address</h2><p id="addressOrder"></p><form onsubmit="confirmAddress(event)"><label>Full name<input id="addressName" required autocomplete="name" placeholder="Your full name"></label><label>Phone number<input id="addressPhone" required inputmode="tel" placeholder="Your WhatsApp number"></label><label>Complete address<textarea id="addressStreet" required autocomplete="street-address" placeholder="House / street / area"></textarea></label><div class="address-grid"><label>Landmark<input id="addressLandmark" required placeholder="Nearby landmark"></label><label>City<input id="addressCity" required placeholder="City"></label><label>State<input id="addressState" required placeholder="State"></label><label>Postal code<input id="addressPostal" required inputmode="numeric" pattern="[0-9]{6}" placeholder="6-digit code"></label></div><button class="address-confirm">Confirm address & order on WhatsApp</button></form></div></div>
@@ -892,17 +892,20 @@ const originalRenderGrid=renderGrid;renderGrid=luxRenderGrid;const originalLoad=
 <script>
 /* Products marked Free Size do not show an unnecessary size selector. */
 const originalLuxOpen = luxOpen;
-luxOpen = function(id){
-  originalLuxOpen(id);
+luxOpen = async function(id){
+  await originalLuxOpen(id);
   if(!luxNeedsSize(luxProduct(id))){
     document.querySelector('.lux-info .lux-label')?.remove();
     document.querySelector('.lux-info .lux-sizes')?.remove();
   }
 };
 /* Address checkout: sends an explicit delivery request to the store WhatsApp. */
-function openAddressCheckout(lines){window.addressLines=lines;document.getElementById('addressOrder').textContent='Ordering: '+lines.map(l=>{const p=luxProduct(l.id);return p.name+(l.size?' ('+l.size+')':'')+' × '+l.qty}).join(', ');document.getElementById('addressCheckout').classList.add('open')}
+function openAddressCheckout(lines){
+  const missing = lines.some(l=>!luxProduct(l.id));
+  if(missing){ showToast('Still loading your bag \u2014 please wait a moment and try again'); loadFullCatalogue(); return; }
+  window.addressLines=lines;document.getElementById('addressOrder').textContent='Ordering: '+lines.map(l=>{const p=luxProduct(l.id);return p.name+(l.size?' ('+l.size+')':'')+' × '+l.qty}).join(', ');document.getElementById('addressCheckout').classList.add('open')}
 function closeAddressCheckout(){document.getElementById('addressCheckout').classList.remove('open')}
-function confirmAddress(e){e.preventDefault();const v=id=>document.getElementById(id).value.trim(),lines=window.addressLines||[];const order=lines.map(l=>{const p=luxProduct(l.id);return `• ${p.name}${l.size?' ('+l.size+')':''} × ${l.qty} — ₹${formatPrice(p.price*l.qty)}`}).join('\n');const total=lines.reduce((s,l)=>s+(luxProduct(l.id)?.price||0)*l.qty,0);const message=`Hi, I would like to place an order.\n\nORDER\n${order}\n\nTotal: ₹${formatPrice(total)}\n\nDELIVERY ADDRESS\nName: ${v('addressName')}\nPhone: ${v('addressPhone')}\nAddress: ${v('addressStreet')}\nLandmark: ${v('addressLandmark')}\nCity: ${v('addressCity')}\nState: ${v('addressState')}\nPostal code: ${v('addressPostal')}`;window.open('https://wa.me/918011799931?text='+encodeURIComponent(message),'_blank');closeAddressCheckout()}
+function confirmAddress(e){e.preventDefault();const v=id=>document.getElementById(id).value.trim(),lines=window.addressLines||[];if(lines.some(l=>!luxProduct(l.id))){showToast('Still loading your bag \u2014 please wait a moment and try again');return;}const order=lines.map(l=>{const p=luxProduct(l.id);return `• ${p.name}${l.size?' ('+l.size+')':''} × ${l.qty} — ₹${formatPrice(p.price*l.qty)}`}).join('\n');const total=lines.reduce((s,l)=>s+(luxProduct(l.id)?.price||0)*l.qty,0);const message=`Hi, I would like to place an order.\n\nORDER\n${order}\n\nTotal: ₹${formatPrice(total)}\n\nDELIVERY ADDRESS\nName: ${v('addressName')}\nPhone: ${v('addressPhone')}\nAddress: ${v('addressStreet')}\nLandmark: ${v('addressLandmark')}\nCity: ${v('addressCity')}\nState: ${v('addressState')}\nPostal code: ${v('addressPostal')}`;window.open('https://wa.me/918011799931?text='+encodeURIComponent(message),'_blank');closeAddressCheckout()}
 luxBuy=function(id){if(!luxSize)return showToast('Please select a size');openAddressCheckout([{id:id,size:luxSize,qty:1}])};luxCheckout=function(){if(!luxCart.length)return showToast('Your bag is empty');openAddressCheckout(luxCart)};
 </script>
 <script>
@@ -930,6 +933,7 @@ resetForm=function(){previousResetForm();document.getElementById('f_imgs').value
 const previousClearImage=clearImage;
 clearImage=function(){previousClearImage();document.getElementById('f_imgs').value=''};
 saveProduct=async function(){
+  if(editingId && !adminFullyLoaded){ showToast('Still loading full catalogue — please wait a moment and try again'); return; }
   const name=document.getElementById('f_name').value.trim(),priceRaw=document.getElementById('f_price').value.trim();
   if(!name||!priceRaw){showToast('Name and price are required');return}
   const priceCleaned = priceRaw.replace(/[^0-9.]/g, ''); // strip commas, ₹, spaces, etc. — "1,200" -> "1200"
@@ -940,6 +944,7 @@ saveProduct=async function(){
   let savedId;
   if(editingId){const index=products.findIndex(p=>p.id===editingId);if(index>-1)products[index]={...products[index],...data};savedId=editingId}else{savedId=cryptoRandom();products.push({id:savedId,...data})}
   if(!pendingSyncIds.includes(savedId)) pendingSyncIds.push(savedId);
+  photosPrefetched.add(savedId); // this product's photos are already known locally — no need to fetch on open
   if(!(await persist())) return;resetForm();renderAdminList();renderTicker();renderFilters();renderGrid();showToast('Saved with '+(images.length+1)+' photo'+(images.length?'s':''));
 };
 </script>
@@ -972,27 +977,8 @@ persist = async function(){
     return false;
   }
 };
-// ---------- background prefetch: quietly fetch the remaining photos for a page
-// of products right after their thumbnails load, so opening one feels instant ----------
-async function prefetchPhotos(productList){
-  const ids = productList.map(p=>p.id).filter(id=>id && !photosPrefetched.has(id));
-  if(!ids.length) return;
-  ids.forEach(id=>photosPrefetched.add(id)); // mark upfront so a second call can't re-request the same batch
-  try {
-    const response = await fetch(`${CLOUD_PRODUCTS_API}?ids=${ids.join(',')}`, { cache: 'no-store' });
-    if(!response.ok) throw new Error('Prefetch failed');
-    const photoData = await response.json();
-    products.forEach(p=>{
-      if(photoData[p.id]){
-        p.images = photoData[p.id].images || [];
-        if(photoData[p.id].img) p.img = photoData[p.id].img;
-      }
-    });
-  } catch(error) {
-    ids.forEach(id=>photosPrefetched.delete(id)); // allow a retry (e.g. via luxOpen's fallback) since this attempt failed
-    console.info('Background photo prefetch failed — will fetch on demand if needed.');
-  }
-}
+// Photos load per-product, on demand, right when someone opens a specific product
+// (see luxOpen) — not bulk-prefetched, since that caused a multi-second delay.
 
 async function loadSharedCatalogue(){
   try {
@@ -1009,7 +995,10 @@ async function loadSharedCatalogue(){
     renderTicker();renderFilters();renderGrid();renderLoadMoreIndicator();
     if(document.getElementById('adminList')) renderAdminList(); // shows this first page until the admin's full fetch (below) completes
     if(typeof luxRenderGrid === 'function') luxRenderGrid();
-    prefetchPhotos(cloudProducts); // quietly fetch the rest of these products' photos in the background
+    if(typeof luxRenderCart === 'function') luxRenderCart(); // pick up any cart items that are in this first page
+    // Photos are no longer bulk-prefetched here — that re-downloaded everything
+    // right after load and caused a multi-second delay. Each product's extra
+    // photos now load only when that specific product is actually opened.
   } catch(error) {
     console.info('Using local catalogue until cloud connection is available.');
     catalogueLoading = false;
@@ -1036,7 +1025,6 @@ async function loadMoreStorefrontProducts(){
       storefrontOffset += nextPage.length;
       if(nextPage.length < PAGE_SIZE) storefrontExhausted = true;
       renderFilters();renderGrid();
-      prefetchPhotos(fresh); // quietly fetch this new batch's photos in the background too
     } else {
       storefrontExhausted = true;
     }
@@ -1075,10 +1063,12 @@ async function loadFullCatalogue(){
       adminFullyLoaded = true;
       storefrontExhausted = true; // we now hold the full catalogue locally, no further pages needed
       storefrontOffset = cloudProducts.length;
+      cloudProducts.forEach(p=>photosPrefetched.add(p.id)); // this fetch already includes full photos — no need to fetch again per-product
     }
     renderTicker();renderFilters();renderGrid();
     if(document.getElementById('adminList')) renderAdminList();
     renderSearchSuggestions();
+    if(typeof luxRenderCart === 'function') luxRenderCart(); // refresh an already-open cart with any items that just became available
   } catch(error) {
     console.info('Could not load the full catalogue — showing what is currently loaded.');
   }
