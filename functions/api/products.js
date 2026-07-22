@@ -58,14 +58,17 @@ export async function onRequest(context) {
       })));
     }
 
-    // No params (the admin panel's full fetch) — behave exactly as before, everything included.
+    // No params (the complete product list — admin panel, search, cart totals) —
+    // thumbnail only, same as the paginated mode. None of these callers actually
+    // need every product's photos; they just need the complete list of rows.
+    // A specific product's photos are fetched separately via ?ids= when needed.
     const { results } = await env.DB.prepare(
-      "SELECT id, name, brand, price, old_price, category, gender, sizes, image, images, notes, stock FROM products ORDER BY created_at DESC"
+      "SELECT id, name, brand, price, old_price, category, gender, sizes, image, notes, stock FROM products ORDER BY created_at DESC"
     ).all();
     return json(results.map(row => ({
       id: row.id, name: row.name, brand: row.brand || "Men's Plaza", price: row.price,
       oldPrice: row.old_price || 0, cat: row.category, gender: row.gender || "Unisex",
-      size: row.sizes || "", img: row.image || "", images: JSON.parse(row.images || "[]"),
+      size: row.sizes || "", img: row.image || "", images: [], // fetched on demand via ?ids= — see /api/products?ids=
       notes: row.notes || "", stock: row.stock || 0
     })));
   }
