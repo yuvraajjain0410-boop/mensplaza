@@ -431,7 +431,7 @@ const PAGE_SIZE = 50;
 let storefrontOffset = 0;
 let storefrontExhausted = false;
 let isFetchingMorePage = false;
-let adminFullyLoaded = false; // becomes true once the admin panel has fetched the complete catalogue
+let adminFullyLoaded = false; // true once the complete product LIST has loaded (names/prices/etc — not necessarily every photo, those load per-product via ensurePhotosLoaded)
 const photosPrefetched = new Set(); // product ids whose full photo set has already been fetched
 
 // ---------- storage ----------
@@ -863,21 +863,32 @@ function luxNeedsSize(product){
   return Boolean(size) && !/^free\s*size$/i.test(size);
 }
 function luxRenderGrid(){const el=document.getElementById('grid');let list=activeFilter==='All'?products:products.filter(p=>p.cat===activeFilter);if(activeGender!=='All')list=list.filter(p=>p.gender===activeGender);if(productSearchTerm)list=list.filter(matchesSearch);if(!list.length){el.innerHTML='<div class="empty">No products found.</div>';return}el.innerHTML=list.map((p,i)=>{let old=(String(p.notes||'').match(/MRP\s*(\d+)/i)||[])[1],off=old&&+old>p.price?Math.round((1-p.price/old)*100):0;return `<div class="card" style="animation-delay:${i*.04}s"><div class="imgwrap" onclick="luxOpen('${p.id}')">${p.img?`<img loading="lazy" src="${escapeAttr(luxSrc(p.img))}" alt="${escapeAttr(p.name)}">`:'<span class="ph">NO IMAGE</span>'}<span class="cat-chip">${escapeHtml(p.cat)}</span></div><div class="sku">${escapeHtml(p.brand||'MEN\'S PLAZA')}</div><div class="name">${escapeHtml(p.name)}</div><div class="price">₹${formatPrice(p.price)} ${old?`<small style="text-decoration:line-through;color:#888;font-weight:400">₹${formatPrice(old)}</small> <small style="color:#168b4b">${off}% OFF</small>`:''}</div><div class="availability" style="font-size:11px;color:#168b4b;margin:6px 0">In stock</div><button class="wa-btn" onclick="luxAdd('${p.id}')">Add to Bag</button></div>`}).join('')}
+// Shared by luxOpen (customer) and editProduct (admin): make sure a specific
+// product's full photo set is loaded before it's shown or edited. Cheap and fast
+// since it's just one product, not the whole catalogue.
+async function ensurePhotosLoaded(id){
+  if(photosPrefetched.has(id)) return true;
+  try {
+    const response = await fetch(`${CLOUD_PRODUCTS_API}?ids=${id}`, { cache: 'no-store' });
+    if(!response.ok) return false;
+    const photoData = await response.json();
+    if(photoData[id]){
+      const p = products.find(pr=>pr.id===id);
+      if(p) p.images = photoData[id].images || [];
+      photosPrefetched.add(id);
+      return true;
+    }
+  } catch(error) { /* fall through to false below */ }
+  return false;
+}
+
 async function luxOpen(id){
   luxCurrent=luxProduct(id);luxImage=0;luxSize='';
   let p=luxCurrent;
   // Normally the background prefetch already filled this in by the time someone taps a
   // product. On the rare chance it hasn't (opened right as the page loaded), fetch just
   // this one product's photos now — small and fast, instead of showing only the thumbnail.
-  if(!photosPrefetched.has(id) && p.img){
-    try {
-      const response = await fetch(`${CLOUD_PRODUCTS_API}?ids=${id}`, { cache: 'no-store' });
-      if(response.ok){
-        const photoData = await response.json();
-        if(photoData[id]){ p.images = photoData[id].images || []; photosPrefetched.add(id); }
-      }
-    } catch(error) { /* fall back silently to whatever photos are already on hand */ }
-  }
+  if(p.img) await ensurePhotosLoaded(id);
   let images=[p.img,...(p.images||[])].filter(Boolean);if(images.length<2&&p.img)images=[p.img,p.img,p.img];document.getElementById('luxProduct').innerHTML=`<button class="lux-close" onclick="luxClose()">×</button><div class="lux-detail"><div class="lux-gallery"><div class="lux-thumbs">${images.map((x,i)=>`<img class="${i===0?'active':''}" src="${escapeAttr(luxSrc(x))}" onclick="luxSetImage(${i})">`).join('')}</div><div class="lux-main"><img id="luxMainImg" src="${escapeAttr(luxSrc(images[0]))}" onclick="this.classList.toggle('zoom')"><button class="lux-arrow lux-prev" onclick="luxMove(-1)">‹</button><button class="lux-arrow lux-next" onclick="luxMove(1)">›</button><button style="position:absolute;right:12px;bottom:12px" onclick="luxFullscreen()">⛶</button></div></div><div class="lux-info"><div class="lux-brand">${escapeHtml(p.brand||'MEN\'S PLAZA')} / ${escapeHtml(p.cat)}</div><h1>${escapeHtml(p.name)}</h1><div class="lux-price">₹${formatPrice(p.price)}</div><div class="lux-label">Select a size</div><div class="lux-sizes">${String(p.size||'UK 7, UK 8, UK 9').split(',').map(s=>`<button onclick="luxSelectSize(this,'${escapeAttr(s.trim())}')">${escapeHtml(s.trim())}</button>`).join('')}</div><div class="lux-actions"><button onclick="luxAdd('${p.id}',true)">Add to bag</button><button onclick="luxBuy('${p.id}')">Buy now</button></div><div class="lux-copy"><b>Product details</b><br>${escapeHtml(p.notes||'Premium everyday footwear selected for comfort and style.')}<br><br><b>Delivery information</b><br>Contact us after ordering for size confirmation and delivery details. Images can be swiped on mobile, selected through thumbnails, zoomed, or viewed full-screen.</div></div></div>`;document.getElementById('luxProduct').classList.add('open');document.body.style.overflow='hidden';let start;document.querySelector('.lux-main').addEventListener('touchstart',e=>start=e.touches[0].clientX,{passive:true});document.querySelector('.lux-main').addEventListener('touchend',e=>{if(Math.abs(e.changedTouches[0].clientX-start)>40)luxMove(e.changedTouches[0].clientX>start?-1:1)},{passive:true})
 }
 function luxClose(){document.getElementById('luxProduct').classList.remove('open');document.body.style.overflow=''}function luxImages(){return [luxCurrent.img,...(luxCurrent.images||[])].filter(Boolean)}function luxSetImage(i){luxImage=i;let a=luxImages();document.getElementById('luxMainImg').src=luxSrc(a[i%a.length]);document.querySelectorAll('.lux-thumbs img').forEach((x,n)=>x.classList.toggle('active',n===i%a.length))}function luxMove(n){let a=luxImages();luxSetImage((luxImage+n+a.length)%a.length)}function luxFullscreen(){let e=document.getElementById('luxFull');e.querySelector('img').src=document.getElementById('luxMainImg').src;e.classList.add('open')}function luxSelectSize(el,size){luxSize=size;document.querySelectorAll('.lux-sizes button').forEach(x=>x.classList.remove('active'));el.classList.add('active')}
@@ -927,13 +938,20 @@ async function handleFileSelect(event){
   try{const photos=await Promise.all(selected.map(compress)),all=[...existing.filter(Boolean),...photos].slice(0,6);document.getElementById('f_img').value=all[0];document.getElementById('f_imgs').value=JSON.stringify(all.slice(1));document.getElementById('imgPreview').src=all[0];document.getElementById('imgPreviewWrap').style.display='block';event.target.value='';help.textContent=all.length+' photo'+(all.length>1?'s':'')+' ready. Tap again to add more (maximum 6).'}catch{help.textContent='One or more photos could not be read.'}
 }
 const previousEditProduct=editProduct;
-editProduct=function(id){previousEditProduct(id);const product=products.find(p=>p.id===id);document.getElementById('f_imgs').value=JSON.stringify((product&&product.images)||[])};
+editProduct=async function(id){
+  previousEditProduct(id);
+  document.getElementById('f_imgs').value='[]'; // clear stale data while this product's real photos load
+  await ensurePhotosLoaded(id);
+  if(editingId !== id) return; // admin switched to editing a different product while this fetch was in flight — discard this stale result
+  const product=products.find(p=>p.id===id);
+  document.getElementById('f_imgs').value=JSON.stringify((product&&product.images)||[]);
+};
 const previousResetForm=resetForm;
 resetForm=function(){previousResetForm();document.getElementById('f_imgs').value='';document.getElementById('fileHelp').textContent='Choose up to 6 photos at once, or choose one photo and tap again to add more.'};
 const previousClearImage=clearImage;
 clearImage=function(){previousClearImage();document.getElementById('f_imgs').value=''};
 saveProduct=async function(){
-  if(editingId && !adminFullyLoaded){ showToast('Still loading full catalogue — please wait a moment and try again'); return; }
+  if(editingId && !photosPrefetched.has(editingId)){ showToast('Still loading this product\'s photos — please wait a moment and try again'); return; }
   const name=document.getElementById('f_name').value.trim(),priceRaw=document.getElementById('f_price').value.trim();
   if(!name||!priceRaw){showToast('Name and price are required');return}
   const priceCleaned = priceRaw.replace(/[^0-9.]/g, ''); // strip commas, ₹, spaces, etc. — "1,200" -> "1200"
@@ -1059,11 +1077,19 @@ async function loadFullCatalogue(){
     if(!response.ok) throw new Error('Load failed');
     const cloudProducts = await response.json();
     if(Array.isArray(cloudProducts)) {
+      // This fetch is thumbnail-only now. If any product here already had its real
+      // photos fetched earlier (opened by a customer, or being edited), keep that
+      // data instead of overwriting it with the empty array this response has.
+      const existingById = new Map(products.map(p=>[p.id,p]));
+      cloudProducts.forEach(p=>{
+        if(photosPrefetched.has(p.id) && existingById.has(p.id)){
+          p.images = existingById.get(p.id).images || [];
+        }
+      });
       products = cloudProducts;
       adminFullyLoaded = true;
-      storefrontExhausted = true; // we now hold the full catalogue locally, no further pages needed
+      storefrontExhausted = true; // we now hold the full list locally, no further pages needed
       storefrontOffset = cloudProducts.length;
-      cloudProducts.forEach(p=>photosPrefetched.add(p.id)); // this fetch already includes full photos — no need to fetch again per-product
     }
     renderTicker();renderFilters();renderGrid();
     if(document.getElementById('adminList')) renderAdminList();
